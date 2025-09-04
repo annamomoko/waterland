@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstract Fish Swimming</title>
+  <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        canvas {
+            display: block;
+            cursor: none;
+        }
+        
+        .instructions {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        
+        .status {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            color: #ffd700;
+            font-size: 16px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        
+        .camera-status {
+            position: absolute;
+            top: 100px;
+            left: 20px;
+            color: #87ceeb;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        
+        .debug-info {
+            position: absolute;
+            top: 130px;
+            left: 20px;
+            color: #90ee90;
+            font-size: 12px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        
+        .camera-selector {
+            position: absolute;
+            top: 160px;
+            left: 20px;
+            z-index: 10;
+        }
+        
+        .camera-selector select {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: 2px solid #87ceeb;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-family: Arial, sans-serif;
+        }
+
+        /* Analyze UI */
+        .analyze-ui {
+            position: absolute;
+            top: 200px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .analyze-ui button {
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.6);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            backdrop-filter: blur(2px);
+        }
+        .analyze-ui button:hover { background: rgba(0,0,0,0.7); }
+        .fullness-output { color: #ffd700; white-space: pre-line; font-size: 14px; }
+        
+        .camera-selector select:focus {
+            outline: none;
+            border-color: #ffd700;
+        }
+        
+
+
+        /* Theme buttons (top-left) */
+        .theme-buttons {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            display: flex;
+            gap: 8px;
+            z-index: 40;
+        }
+
+        .theme-buttons button {
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.6);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            backdrop-filter: blur(2px);
+        }
+
+        .theme-buttons button:hover {
+            background: rgba(0,0,0,0.7);
+        }
+  </style>
+</head>
+<body>
+    <div class="theme-buttons" id="theme-buttons">
+        <button id="btn-blue" title="Blue Gradient">Blue</button>
+        <button id="btn-green" title="Green → Yellow">Green-Yellow</button>
+        <button id="btn-orange" title="Orange → Red">Orange-Red</button>
+    </div>
+    <div class="instructions">Press 'D' for left, 'L' for right, 'K' for all — or show your hand!</div>
+    <div class="status" id="status">Fish swimming in formation</div>
+    <div class="camera-status" id="camera-status">Camera: Initializing...</div>
+    <div class="debug-info" id="debug-info">Hand detection: Inactive</div>
+    <div class="camera-selector" id="camera-selector" style="display: none;">
+        <select id="camera-select">
+            <option value="">Select Camera...</option>
+        </select>
+    </div>
+
+    <div class="analyze-ui">
+        <button id="btn-analyze">Analyze Box Fullness</button>
+        <div id="fullness-output" class="fullness-output"></div>
+    </div>
+
+    <video id="video" style="position: absolute; top: 10px; right: 10px; width: 160px; height: 120px; border: 2px solid white; border-radius: 8px; z-index: 20;"></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        const cameraStatus = document.getElementById('camera-status');
+        const debugInfo = document.getElementById('debug-info');
+        const video = document.getElementById('video');
+        const cameraSelector = document.getElementById('camera-selector');
+        const cameraSelect = document.getElementById('camera-select');
+        const btnAnalyze = document.getElementById('btn-analyze');
+        const fullnessOutput = document.getElementById('fullness-output');
+
+        const btnBlue = document.getElementById('btn-blue');
+        const btnGreen = document.getElementById('btn-green');
+        const btnOrange = document.getElementById('btn-orange');
+        
+        // Set canvas size
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // Fish class (back to original simple design)
+        class Fish {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 20 + 15;
+                this.baseSpeed = Math.random() * 1.5 + 0.8;
+                this.speed = this.baseSpeed;
+                this.angle = Math.random() * Math.PI * 2;
+                this.targetAngle = 0;
+                this.scatterAngle = 0;
+                this.color = this.generateColor();
+                this.tail = [];
+                this.maxTailLength = 8;
+                this.swimOffset = Math.random() * Math.PI * 2;
+                this.personalSpace = this.size * 3;
+                this.isScattering = false;
+                this.scatterSpeed = 0;
+                this.scatterUntil = 0;
+            }
+            
+            generateColor() {
+                const colors = [
+                    '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', 
+                    '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'
+                ];
+                return colors[Math.floor(Math.random() * colors.length)];
+            }
+            
+            update(isScattered, groupAngle, allFish) {
+                // Store previous position for tail
+                this.tail.unshift({x: this.x, y: this.y});
+                if (this.tail.length > this.maxTailLength) {
+                    this.tail.pop();
+                }
+                
+                const activeScatter = isScattered || (Date.now() < this.scatterUntil);
+                
+                if (activeScatter) {
+                    this.targetAngle = this.scatterAngle;
+                    this.speed = this.scatterSpeed;
+                    this.isScattering = true;
+                } else {
+                    if (this.isScattering) {
+                        this.speed = this.baseSpeed;
+                        this.isScattering = false;
+                    }
+                    
+                    // Natural schooling behavior
+                    let avgX = 0, avgY = 0, neighbors = 0;
+                    let separationX = 0, separationY = 0;
+                    let avgAngle = 0;
+                    
+                    // Check nearby fish for flocking behavior
+                    allFish.forEach(other => {
+                        if (other === this) return;
+                        
+                        const dx = other.x - this.x;
+                        const dy = other.y - this.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < this.personalSpace * 4) {
+                            neighbors++;
+                            avgX += other.x;
+                            avgY += other.y;
+                            avgAngle += other.angle;
+                            
+                            if (distance < this.personalSpace) {
+                                separationX -= dx / distance;
+                                separationY -= dy / distance;
+                            }
+                        }
+                    });
+                    
+                    if (neighbors > 0) {
+                        avgX /= neighbors;
+                        avgY /= neighbors;
+                        const cohesionAngle = Math.atan2(avgY - this.y, avgX - this.x);
+                        avgAngle /= neighbors;
+                        
+                        let separationAngle = Math.atan2(separationY, separationX);
+                        
+                        this.targetAngle = 
+                            groupAngle * 0.4 + 
+                            cohesionAngle * 0.2 + 
+                            avgAngle * 0.3 + 
+                            separationAngle * 0.1 +
+                            Math.sin(Date.now() * 0.002 + this.swimOffset) * 0.2;
+                    } else {
+                        this.targetAngle = groupAngle + Math.sin(Date.now() * 0.002 + this.swimOffset) * 0.3;
+                    }
+                }
+                
+                // Smooth angle transition
+                let angleDiff = this.targetAngle - this.angle;
+                if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                this.angle += angleDiff * (activeScatter ? 0.15 : 0.08);
+                
+                // Move fish with natural swimming motion
+                const swimWave = Math.sin(Date.now() * 0.01 + this.swimOffset) * 0.2;
+                this.x += Math.cos(this.angle + swimWave) * this.speed;
+                this.y += Math.sin(this.angle + swimWave) * this.speed;
+                
+                // Wrap around screen
+                if (this.x < -50) this.x = canvas.width + 50;
+                if (this.x > canvas.width + 50) this.x = -50;
+                if (this.y < -50) this.y = canvas.height + 50;
+                if (this.y > canvas.height + 50) this.y = -50;
+            }
+            
+            draw() {
+                ctx.save();
+                
+                // Draw tail
+                for (let i = 0; i < this.tail.length; i++) {
+                    const alpha = (this.tail.length - i) / this.tail.length * 0.3;
+                    const size = this.size * (0.3 + alpha);
+                    
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.tail[i].x, this.tail[i].y, size * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                ctx.globalAlpha = 1;
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                // Draw fish body
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.size, this.size * 0.6, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw fish outline
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw eye
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.size * 0.3, -this.size * 0.1, this.size * 0.15, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.size * 0.35, -this.size * 0.1, this.size * 0.08, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw fins
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = 0.7;
+                
+                // Top fin
+                ctx.beginPath();
+                ctx.moveTo(-this.size * 0.2, -this.size * 0.4);
+                ctx.lineTo(this.size * 0.2, -this.size * 0.8);
+                ctx.lineTo(this.size * 0.6, -this.size * 0.3);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Bottom fin
+                ctx.beginPath();
+                ctx.moveTo(-this.size * 0.2, this.size * 0.4);
+                ctx.lineTo(this.size * 0.2, this.size * 0.8);
+                ctx.lineTo(this.size * 0.6, this.size * 0.3);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Tail fin
+                ctx.beginPath();
+                ctx.moveTo(-this.size * 0.8, -this.size * 0.4);
+                ctx.lineTo(-this.size * 1.2, 0);
+                ctx.lineTo(-this.size * 0.8, this.size * 0.4);
+                ctx.lineTo(-this.size * 0.6, 0);
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.restore();
+            }
+            
+            scatter() {
+                this.scatterAngle = Math.random() * Math.PI * 2;
+                this.scatterSpeed = this.baseSpeed * (2 + Math.random() * 2);
+            }
+        }
+        
+        // Water splash effects
+        class WaterSplash {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.particles = [];
+                this.life = 1.0;
+                
+                // Create splash particles
+                for (let i = 0; i < 20; i++) {
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * 12,
+                        vy: (Math.random() - 0.5) * 12,
+                        life: 1.0,
+                        size: Math.random() * 8 + 3
+                    });
+                }
+            }
+            
+            update() {
+                this.life -= 0.03;
+                this.particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vx *= 0.95;
+                    p.vy *= 0.95;
+                    p.life -= 0.02;
+                    p.size *= 0.98;
+                });
+                
+                this.particles = this.particles.filter(p => p.life > 0);
+                return this.life > 0;
+            }
+            
+            draw() {
+                this.particles.forEach(p => {
+                    ctx.save();
+                    ctx.globalAlpha = p.life * 0.6;
+                    ctx.fillStyle = '#87ceeb';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.globalAlpha = p.life * 0.3;
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+            }
+        }
+        
+        // Ripple effect
+        class WaterRipple {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 0;
+                this.maxRadius = 150;
+                this.life = 1.0;
+            }
+            
+            update() {
+                this.radius += 4;
+                this.life = 1 - (this.radius / this.maxRadius);
+                return this.life > 0;
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.life * 0.3;
+                ctx.strokeStyle = '#87ceeb';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ctx.globalAlpha = this.life * 0.1;
+                ctx.lineWidth = 6;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+        
+        // Create fish school
+        const fish = [];
+        const fishCount = 25;
+        const waterEffects = [];
+        
+        // Create fish in a more spread out formation
+        for (let i = 0; i < fishCount; i++) {
+            const angle = (i / fishCount) * Math.PI * 2;
+            const radius = 100 + Math.random() * 200;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            fish.push(new Fish(
+                centerX + Math.cos(angle) * radius + (Math.random() - 0.5) * 100,
+                centerY + Math.sin(angle) * radius + (Math.random() - 0.5) * 100
+            ));
+        }
+        
+        // Game state
+        let isScattered = false;
+        let scatterTime = 0;
+        let groupAngle = 0;
+        let lastHandDetection = 0;
+        let handDetectionCooldown = 3000; // 3 second cooldown
+        
+        // Hand detection variables
+        let handDetectionEnabled = false;
+        let baselineSet = false;
+        let baselineSkinPixels = 0;
+        let frameCount = 0;
+        
+        // Camera management variables
+        let availableCameras = [];
+        let currentStream = null;
+        let selectedCameraId = null;
+        
+        let backgroundOverride = null; // 'blue' | 'green' | 'orange' | null
+        let selectedTheme = 'blue';
+        let forceRepaintBackground = true;
+        const themeGradients = {
+            blue: ['#1e3c72', '#2a5298'],
+            green: ['#2e7d32', '#f9a825'],
+            orange: ['#fb8c00', '#c62828']
+        };
+        
+        // Enumerate available cameras
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                availableCameras = devices.filter(device => device.kind === 'videoinput');
+                
+                // Clear existing options
+                cameraSelect.innerHTML = '<option value="">Select Camera...</option>';
+                
+                // Add cameras to selector
+                availableCameras.forEach((camera, index) => {
+                    const option = document.createElement('option');
+                    option.value = camera.deviceId;
+                    option.textContent = camera.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                
+                // Show selector if multiple cameras available
+                if (availableCameras.length > 1) {
+                    cameraSelector.style.display = 'block';
+                    cameraStatus.textContent = `Camera: ${availableCameras.length} cameras found - Select one below`;
+                } else if (availableCameras.length === 1) {
+                    // Auto-select if only one camera
+                    selectedCameraId = availableCameras[0].deviceId;
+                    startCamera(selectedCameraId);
+                } else {
+                    cameraStatus.textContent = 'Camera: No cameras found';
+                }
+                
+                return availableCameras.length > 0;
+            } catch (error) {
+                console.error('Failed to enumerate cameras:', error);
+                cameraStatus.textContent = 'Camera: Error accessing cameras';
+                return false;
+            }
+        }
+        
+        // Start camera with specific device ID
+        async function startCamera(deviceId) {
+            try {
+                // Stop current stream if exists
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+                
+                cameraStatus.textContent = 'Camera: Starting camera...';
+                
+                const constraints = {
+                    video: { 
+                        width: 320, 
+                        height: 240,
+                        deviceId: deviceId ? { exact: deviceId } : undefined,
+                        facingMode: deviceId ? undefined : 'user'
+                    }
+                };
+                
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+                video.play();
+                
+                selectedCameraId = deviceId;
+                
+                // Update selector to show selected camera
+                if (deviceId && cameraSelect.value !== deviceId) {
+                    cameraSelect.value = deviceId;
+                }
+                
+                cameraStatus.textContent = 'Camera: Setting up hand detection...';
+                
+                // Wait for video to be ready, then start hand detection
+                video.addEventListener('loadeddata', () => {
+                    setTimeout(() => {
+                        // Reset hand detection baseline for new camera
+                        baselineSet = false;
+                        frameCount = 0;
+                        startHandDetection();
+                        
+                        const selectedCamera = availableCameras.find(cam => cam.deviceId === deviceId);
+                        const cameraName = selectedCamera ? (selectedCamera.label || 'Unknown Camera') : 'Default Camera';
+                        cameraStatus.textContent = `Camera: Active (${cameraName}) - Show hand to scatter fish!`;
+                    }, 1000);
+                });
+                
+            } catch (error) {
+                console.error('Camera access failed:', error);
+                cameraStatus.textContent = 'Camera: Failed to start - Use keyboard only';
+                debugInfo.textContent = 'Hand detection: Disabled (camera error)';
+            }
+        }
+        
+        // Initialize camera system
+        async function initializeCamera() {
+            try {
+                cameraStatus.textContent = 'Camera: Requesting permission...';
+                
+                // First, get permission to access cameras
+                const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                tempStream.getTracks().forEach(track => track.stop()); // Stop immediately
+                
+                // Now enumerate cameras with proper labels
+                await enumerateCameras();
+                
+            } catch (error) {
+                console.error('Camera permission denied:', error);
+                cameraStatus.textContent = 'Camera: Permission denied - Use keyboard only';
+                debugInfo.textContent = 'Hand detection: Disabled (no permission)';
+            }
+        }
+        
+        function startHandDetection() {
+            const detectionCanvas = document.createElement('canvas');
+            const detectionCtx = detectionCanvas.getContext('2d');
+            detectionCanvas.width = 160;
+            detectionCanvas.height = 120;
+            
+            handDetectionEnabled = true;
+            
+            function detectHand() {
+                if (!handDetectionEnabled || video.readyState !== video.HAVE_ENOUGH_DATA) {
+                    requestAnimationFrame(detectHand);
+        return;
+      }
+
+                frameCount++;
+                detectionCtx.drawImage(video, 0, 0, detectionCanvas.width, detectionCanvas.height);
+                
+                // Get image data for analysis
+                const imageData = detectionCtx.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
+                const data = imageData.data;
+                
+                // Analyze multiple regions for hand detection
+                const regions = [
+                    { x: 40, y: 30, w: 80, h: 60 },  // center
+                    { x: 20, y: 20, w: 60, h: 50 },  // top-left
+                    { x: 80, y: 20, w: 60, h: 50 },  // top-right
+                    { x: 40, y: 50, w: 80, h: 50 }   // bottom-center
+                ];
+                
+                let totalSkinPixels = 0;
+                let handLikeRegions = 0;
+                
+                regions.forEach(region => {
+                    let skinPixels = 0;
+                    let totalPixels = 0;
+                    let skinClusters = 0;
+                    
+                    for (let y = region.y; y < region.y + region.h && y < detectionCanvas.height; y++) {
+                        for (let x = region.x; x < region.x + region.w && x < detectionCanvas.width; x++) {
+                            const i = (y * detectionCanvas.width + x) * 4;
+                            const r = data[i];
+                            const g = data[i + 1];
+                            const b = data[i + 2];
+                            
+                            if (isImprovedSkinTone(r, g, b)) {
+                                skinPixels++;
+                            }
+                            totalPixels++;
+                        }
+                    }
+                    
+                    const skinRatio = skinPixels / totalPixels;
+                    totalSkinPixels += skinPixels;
+                    
+                    // A region is "hand-like" if it has a good concentration of skin pixels
+                    if (skinRatio > 0.25 && skinPixels > 200) {
+                        handLikeRegions++;
+                    }
+                });
+                
+                // Set baseline after first 30 frames
+                if (!baselineSet && frameCount > 30) {
+                    baselineSkinPixels = totalSkinPixels;
+                    baselineSet = true;
+                    debugInfo.textContent = `Hand detection: Ready (baseline: ${Math.round(baselineSkinPixels)})`;
+                }
+                
+                // Hand detection logic: significant increase from baseline + hand-like regions
+                const skinIncrease = totalSkinPixels - baselineSkinPixels;
+                const handDetected = baselineSet && 
+                                  skinIncrease > 500 && 
+                                  handLikeRegions >= 1 && 
+                                  totalSkinPixels > 800;
+                
+                // Update debug info
+                debugInfo.textContent = `Skin pixels: ${Math.round(totalSkinPixels)} (Δ${Math.round(skinIncrease)}) | Hand-like regions: ${handLikeRegions}`;
+                
+                if (handDetected && Date.now() - lastHandDetection > handDetectionCooldown) {
+                    if (skinIncrease > 4500) {
+                        triggerScatterLeft();
+                    } else if (skinIncrease >= 1500 && skinIncrease <= 4500) {
+                        triggerScatter();
+                    } else if (skinIncrease < 1500) {
+                        triggerScatterRight();
+                    } else {
+                        triggerScatter();
+                    }
+                    lastHandDetection = Date.now();
+                    cameraStatus.textContent = 'Camera: Hand detected! ✋';
+                    debugInfo.textContent = 'HAND DETECTED! Fish scattered!';
+                    
+                    setTimeout(() => {
+                        if (handDetectionEnabled) {
+                            cameraStatus.textContent = 'Camera: Active - Show hand to scatter fish!';
+                        }
+                    }, 2000);
+                }
+                
+
+                
+                requestAnimationFrame(detectHand);
+            }
+            
+            detectHand();
+        }
+        
+        function isImprovedSkinTone(r, g, b) {
+            // More robust skin tone detection
+            // Multiple skin tone ranges to account for different ethnicities
+            
+            // Condition 1: Traditional RGB skin detection
+            const cond1 = (r > 95 && g > 40 && b > 20 && 
+                          Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
+                          Math.abs(r - g) > 15 && r > g && r > b);
+            
+            // Condition 2: YCrCb color space approximation
+            const y = 0.299 * r + 0.587 * g + 0.114 * b;
+            const cr = 0.713 * (r - y);
+            const cb = 0.564 * (b - y);
+            const cond2 = (cr >= -25 && cr <= 25 && cb >= -15 && cb <= 15);
+            
+            // Condition 3: HSV-based detection
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const diff = max - min;
+            let h = 0;
+            
+            if (diff !== 0) {
+                if (max === r) h = ((g - b) / diff) % 6;
+                else if (max === g) h = (b - r) / diff + 2;
+                else h = (r - g) / diff + 4;
+                h = Math.round(h * 60);
+                if (h < 0) h += 360;
+            }
+            
+            const s = max === 0 ? 0 : diff / max;
+            const v = max / 255;
+            
+            const cond3 = ((h >= 0 && h <= 50) || (h >= 300 && h <= 360)) && 
+                         s >= 0.23 && s <= 0.68 && v >= 0.35;
+            
+            return cond1 || (cond2 && cond3);
+        }
+        
+
+
+        // Apply a manual background gradient theme
+        function applyBackgroundGradient(theme) {
+            backgroundOverride = theme;
+            selectedTheme = theme;
+            forceRepaintBackground = true;
+            if (theme === 'blue') {
+                document.body.style.background = 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)';
+            } else if (theme === 'green') {
+                document.body.style.background = 'linear-gradient(135deg, #2e7d32 0%, #f9a825 100%)';
+            } else if (theme === 'orange') {
+                document.body.style.background = 'linear-gradient(135deg, #fb8c00 0%, #c62828 100%)';
+            }
+        }
+        
+        function triggerScatter() {
+            if (!isScattered) {
+                isScattered = true;
+                scatterTime = Date.now();
+                status.textContent = 'Fish scattered! Regrouping in 3 seconds...';
+                
+                // Scatter all fish and create water effects
+                fish.forEach(f => {
+                    f.scatter();
+                    
+                    // Create splash effects around each fish
+                    waterEffects.push(new WaterSplash(f.x, f.y));
+                    waterEffects.push(new WaterRipple(f.x, f.y));
+                });
+                
+                // Create some random splashes for dramatic effect
+                for (let i = 0; i < 8; i++) {
+                    setTimeout(() => {
+                        waterEffects.push(new WaterSplash(
+                            Math.random() * canvas.width,
+                            Math.random() * canvas.height
+                        ));
+                        waterEffects.push(new WaterRipple(
+                            Math.random() * canvas.width,
+                            Math.random() * canvas.height
+                        ));
+                    }, Math.random() * 500);
+                }
+            }
+        }
+
+        function triggerScatterSide(side) {
+            const now = Date.now();
+            const duration = 3000;
+            const thirdX = canvas.width / 3;
+            const twoThirdX = 2 * thirdX;
+            const isLeft = side === 'left';
+            status.textContent = isLeft ? 'Left side splash!' : 'Right side splash!';
+            
+            fish.forEach(f => {
+                const inTargetThird = isLeft ? (f.x < thirdX) : (f.x >= twoThirdX);
+                const bleedFromOtherZones = !inTargetThird && Math.random() < 0.15; // small bleed for "mostly"
+                if (inTargetThird || bleedFromOtherZones) {
+                    f.scatter();
+                    f.scatterUntil = now + duration;
+                    waterEffects.push(new WaterSplash(f.x, f.y));
+                    waterEffects.push(new WaterRipple(f.x, f.y));
+                }
+            });
+            
+            // Extra splashes confined to the target half
+            for (let i = 0; i < 6; i++) {
+                setTimeout(() => {
+                    const rx = isLeft 
+                        ? Math.random() * thirdX 
+                        : twoThirdX + Math.random() * (canvas.width - twoThirdX);
+                    const ry = Math.random() * canvas.height;
+                    waterEffects.push(new WaterSplash(rx, ry));
+                    waterEffects.push(new WaterRipple(rx, ry));
+                }, Math.random() * 500);
+            }
+        }
+
+        function triggerScatterLeft() {
+            triggerScatterSide('left');
+        }
+
+        function triggerScatterRight() {
+            triggerScatterSide('right');
+        }
+        
+        // Animation loop
+        function animate() {
+            // Clear canvas background using theme gradient
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            const colors = themeGradients[selectedTheme] || themeGradients.blue;
+            gradient.addColorStop(0, colors[0]);
+            gradient.addColorStop(1, colors[1]);
+            ctx.save();
+            if (forceRepaintBackground) {
+                ctx.globalAlpha = 1.0; // immediate repaint on theme change
+                forceRepaintBackground = false;
+            } else {
+                ctx.globalAlpha = 0.1; // motion blur fade
+            }
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.restore();
+            
+            // Update group angle for natural movement
+            groupAngle += 0.005;
+            
+            // Check if scatter time is over
+            if (isScattered && Date.now() - scatterTime > 3000) {
+                isScattered = false;
+                status.textContent = 'Fish regrouping...';
+                setTimeout(() => {
+                    if (!isScattered) {
+                        status.textContent = 'Fish swimming in formation';
+                    }
+                }, 1000);
+            }
+            
+            // Update and draw fish
+            fish.forEach((f, index) => {
+                f.update(isScattered, groupAngle, fish);
+                f.draw();
+            });
+            
+            // Update and draw water effects
+            for (let i = waterEffects.length - 1; i >= 0; i--) {
+                if (!waterEffects[i].update()) {
+                    waterEffects.splice(i, 1);
+                } else {
+                    waterEffects[i].draw();
+                }
+            }
+            
+            // Add some bubbles for atmosphere
+            if (Math.random() < 0.1) {
+                drawBubble();
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        function drawBubble() {
+            const x = Math.random() * canvas.width;
+            const y = canvas.height;
+            const size = Math.random() * 10 + 5;
+            
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#87ceeb';
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'd') {
+                triggerScatterLeft();
+            } else if (key === 'l') {
+                triggerScatterRight();
+            } else if (key === 'k') {
+                triggerScatter();
+            }
+        });
+        
+        // Theme button handlers
+        btnBlue.addEventListener('click', () => applyBackgroundGradient('blue'));
+        btnGreen.addEventListener('click', () => applyBackgroundGradient('green'));
+        btnOrange.addEventListener('click', () => applyBackgroundGradient('orange'));
+        
+        // Camera selection change handler
+        cameraSelect.addEventListener('change', (e) => {
+            const selectedDeviceId = e.target.value;
+            if (selectedDeviceId) {
+                startCamera(selectedDeviceId);
+            }
+        });
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+        
+        // Start animation and camera
+        animate();
+        initializeCamera();
+
+        // Capture a frame from the video as JPEG data URL
+        function captureFrameAsBlob() {
+      return new Promise((resolve, reject) => {
+                try {
+                    const off = document.createElement('canvas');
+                    off.width = video.videoWidth || 320;
+                    off.height = video.videoHeight || 240;
+                    const ox = off.getContext('2d');
+                    ox.drawImage(video, 0, 0, off.width, off.height);
+                    off.toBlob((blob) => {
+                        if (blob) resolve(blob); else reject(new Error('Failed to capture frame'));
+                    }, 'image/jpeg', 0.9);
+                } catch (e) { reject(e); }
+            });
+        }
+
+        async function analyzeFromCamera() {
+            fullnessOutput.textContent = 'Analyzing...';
+            try {
+                const blob = await captureFrameAsBlob();
+                const form = new FormData();
+                form.append('image', blob, 'frame.jpg');
+                const res = await fetch('/analyze', { method: 'POST', body: form });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) {
+                    const msg = (data && data.error) ? data.error : `Server error: ${res.status}`;
+                    throw new Error(msg);
+                }
+                if (data) {
+                    const { fullness, stone, plastic, other, reasons, outputFormat, raw } = data;
+                    const lines = [];
+                    lines.push(`Fullness: ${fullness ?? '-'}%`);
+                    if (Array.isArray(reasons) && reasons.length) {
+                        lines.push('Reasons:');
+                        reasons.forEach(r => lines.push(`- ${r}`));
+                    }
+                    if (raw && outputFormat === 'regex') {
+                        lines.push('');
+                        lines.push('Raw output:');
+                        lines.push(String(raw));
+                    }
+                    fullnessOutput.textContent = lines.join('\n');
+                } else {
+                    fullnessOutput.textContent = 'No result returned.';
+                }
+            } catch (err) {
+                console.error(err);
+                fullnessOutput.textContent = err && err.message ? err.message : 'Error analyzing image.';
+            }
+        }
+
+        btnAnalyze.addEventListener('click', analyzeFromCamera);
+  </script>
+</body>
+</html>
