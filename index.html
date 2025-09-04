@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Abstract Fish Swimming</title>
-    <style>
+  <style>
         body {
             margin: 0;
             padding: 0;
@@ -74,6 +74,29 @@
             font-size: 12px;
             font-family: Arial, sans-serif;
         }
+
+        /* Analyze UI */
+        .analyze-ui {
+            position: absolute;
+            top: 200px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .analyze-ui button {
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.6);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            backdrop-filter: blur(2px);
+        }
+        .analyze-ui button:hover { background: rgba(0,0,0,0.7); }
+        .fullness-output { color: #ffd700; white-space: pre-line; font-size: 14px; }
         
         .camera-selector select:focus {
             outline: none;
@@ -106,7 +129,7 @@
         .theme-buttons button:hover {
             background: rgba(0,0,0,0.7);
         }
-    </style>
+  </style>
 </head>
 <body>
     <div class="theme-buttons" id="theme-buttons">
@@ -124,6 +147,11 @@
         </select>
     </div>
 
+    <div class="analyze-ui">
+        <button id="btn-analyze">Analyze Box Fullness</button>
+        <div id="fullness-output" class="fullness-output"></div>
+    </div>
+
     <video id="video" style="position: absolute; top: 10px; right: 10px; width: 160px; height: 120px; border: 2px solid white; border-radius: 8px; z-index: 20;"></video>
     <canvas id="canvas"></canvas>
 
@@ -136,6 +164,8 @@
         const video = document.getElementById('video');
         const cameraSelector = document.getElementById('camera-selector');
         const cameraSelect = document.getElementById('camera-select');
+        const btnAnalyze = document.getElementById('btn-analyze');
+        const fullnessOutput = document.getElementById('fullness-output');
 
         const btnBlue = document.getElementById('btn-blue');
         const btnGreen = document.getElementById('btn-green');
@@ -587,9 +617,9 @@
             function detectHand() {
                 if (!handDetectionEnabled || video.readyState !== video.HAVE_ENOUGH_DATA) {
                     requestAnimationFrame(detectHand);
-                    return;
-                }
-                
+        return;
+      }
+
                 frameCount++;
                 detectionCtx.drawImage(video, 0, 0, detectionCanvas.width, detectionCanvas.height);
                 
@@ -910,6 +940,59 @@
         // Start animation and camera
         animate();
         initializeCamera();
-    </script>
+
+        // Capture a frame from the video as JPEG data URL
+        function captureFrameAsBlob() {
+      return new Promise((resolve, reject) => {
+                try {
+                    const off = document.createElement('canvas');
+                    off.width = video.videoWidth || 320;
+                    off.height = video.videoHeight || 240;
+                    const ox = off.getContext('2d');
+                    ox.drawImage(video, 0, 0, off.width, off.height);
+                    off.toBlob((blob) => {
+                        if (blob) resolve(blob); else reject(new Error('Failed to capture frame'));
+                    }, 'image/jpeg', 0.9);
+                } catch (e) { reject(e); }
+            });
+        }
+
+        async function analyzeFromCamera() {
+            fullnessOutput.textContent = 'Analyzing...';
+            try {
+                const blob = await captureFrameAsBlob();
+                const form = new FormData();
+                form.append('image', blob, 'frame.jpg');
+                const res = await fetch('/analyze', { method: 'POST', body: form });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) {
+                    const msg = (data && data.error) ? data.error : `Server error: ${res.status}`;
+                    throw new Error(msg);
+                }
+                if (data) {
+                    const { fullness, stone, plastic, other, reasons, outputFormat, raw } = data;
+                    const lines = [];
+                    lines.push(`Fullness: ${fullness ?? '-'}%`);
+                    if (Array.isArray(reasons) && reasons.length) {
+                        lines.push('Reasons:');
+                        reasons.forEach(r => lines.push(`- ${r}`));
+                    }
+                    if (raw && outputFormat === 'regex') {
+                        lines.push('');
+                        lines.push('Raw output:');
+                        lines.push(String(raw));
+                    }
+                    fullnessOutput.textContent = lines.join('\n');
+                } else {
+                    fullnessOutput.textContent = 'No result returned.';
+                }
+            } catch (err) {
+                console.error(err);
+                fullnessOutput.textContent = err && err.message ? err.message : 'Error analyzing image.';
+            }
+        }
+
+        btnAnalyze.addEventListener('click', analyzeFromCamera);
+  </script>
 </body>
 </html>
