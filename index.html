@@ -941,9 +941,9 @@
         animate();
         initializeCamera();
 
-        // Capture a frame from the video as JPEG data URL
+        // Capture a frame helpers
         function captureFrameAsBlob() {
-      return new Promise((resolve, reject) => {
+            return new Promise((resolve, reject) => {
                 try {
                     const off = document.createElement('canvas');
                     off.width = video.videoWidth || 320;
@@ -956,15 +956,34 @@
                 } catch (e) { reject(e); }
             });
         }
+        function captureFrameDataUrl() {
+            const off = document.createElement('canvas');
+            off.width = video.videoWidth || 320;
+            off.height = video.videoHeight || 240;
+            const ox = off.getContext('2d');
+            ox.drawImage(video, 0, 0, off.width, off.height);
+            return off.toDataURL('image/jpeg', 0.9);
+        }
 
         async function analyzeFromCamera() {
             fullnessOutput.textContent = 'Analyzing...';
             try {
-                const blob = await captureFrameAsBlob();
-                const form = new FormData();
-                form.append('image', blob, 'frame.jpg');
-                const res = await fetch('/analyze', { method: 'POST', body: form });
-                const data = await res.json().catch(() => null);
+                // Try Vercel serverless function first
+                const dataUrl = captureFrameDataUrl();
+                let res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageBase64: dataUrl })
+                });
+                let data = await res.json().catch(() => null);
+                if (!res.ok && res.status === 404) {
+                    // Fallback to local Express route
+                    const blob = await captureFrameAsBlob();
+                    const form = new FormData();
+                    form.append('image', blob, 'frame.jpg');
+                    res = await fetch('/analyze', { method: 'POST', body: form });
+                    data = await res.json().catch(() => null);
+                }
                 if (!res.ok) {
                     const msg = (data && data.error) ? data.error : `Server error: ${res.status}`;
                     throw new Error(msg);
